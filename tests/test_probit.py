@@ -1,10 +1,12 @@
 import numpy as np
 import scipy.sparse as sp
 import unittest
+from sklearn import metrics
 from sklearn.base import clone
-from sklearn.datasets import load_iris, make_blobs
+from sklearn.datasets import load_iris, make_blobs, load_diabetes
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import KBinsDiscretizer
 from sklearn.utils import shuffle
 from sklearn.utils.estimator_checks import check_estimator
 from sklearn.utils.estimator_checks import check_parameters_default_constructible
@@ -104,6 +106,14 @@ class TestOrderedProbit(unittest.TestCase):
     """
 
     """
+    def __init__(self, *args, **kwargs):
+        super(TestOrderedProbit, self).__init__(*args, **kwargs)
+        diabetes = load_diabetes()
+        self.Xd = diabetes['data']
+        yd = diabetes['target']
+        kbd = KBinsDiscretizer(n_bins=6, encode='ordinal', strategy='kmeans')
+        self.yd = kbd.fit_transform(yd.reshape(-1, 1)).flatten().astype(np.int32)
+
     def test_check_estimator(self):
         """Runs sklearn necessary estimator checks
            Since OrderedProbitRanker is not a proper classifier
@@ -126,6 +136,21 @@ class TestOrderedProbit(unittest.TestCase):
         _Y = [0, 1, 1]
         check_predictions(OrderedProbitRanker(), _X, _Y)
         check_predictions(OrderedProbitRanker(), _X_sp, _Y)
+
+
+    def test_diabetes(self):
+        """test on boston dataset"""
+        opr = OrderedProbitRanker(method='L-BFGS-B', use_grad=False)
+        opr.fit(self.Xd, self.yd)
+        pred_val = opr.predict(self.Xd)
+        assert metrics.mean_absolute_error(pred_val, self.yd) < 1.0
+        assert metrics.mean_squared_error(pred_val, self.yd) < 1.5
+        assert (opr.cuts_ == np.sort(opr.cuts_)).all()
+        print("\n\n\nProbit\nscore: ", metrics.accuracy_score(pred_val, self.yd))
+        print("mse: ", metrics.mean_squared_error(pred_val, self.yd))
+        print("mae: ", metrics.mean_absolute_error(pred_val, self.yd))
+        print("cuts: ", opr.cuts_)
+
 
 if __name__ == '__main__':
     unittest.main()

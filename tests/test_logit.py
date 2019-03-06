@@ -3,6 +3,11 @@ import numpy as np
 import scipy.sparse as sp
 from scipy import stats, optimize, sparse
 from sklearn import datasets, metrics, linear_model
+from sklearn.base import clone
+from sklearn.datasets import load_iris, make_blobs, load_diabetes
+from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import KBinsDiscretizer
 from sklearn.utils.estimator_checks import check_no_attributes_set_in_init
 from sklearn.utils.estimator_checks import check_parameters_default_constructible
 from sklearn.utils.testing import assert_greater
@@ -18,18 +23,80 @@ class TestOrderedLogit(unittest.TestCase):
     """
 
     """
-    def test_check_estimator(self):
+    def __init__(self, *args, **kwargs):
+        super(TestOrderedLogit, self).__init__(*args, **kwargs)
+        diabetes = load_diabetes()
+        self.Xd = diabetes['data']
+        yd = diabetes['target']
+        kbd = KBinsDiscretizer(n_bins=6, encode='ordinal', strategy='kmeans')
+        self.yd = kbd.fit_transform(yd.reshape(-1, 1)).flatten().astype(np.int32)
+
+    def test_diabetes_at(self):
+        """test on boston dataset"""
+        opr = OrderedLogitRanker(variant='at')
+        opr.fit(self.Xd, self.yd)
+        pred_val = opr.predict(self.Xd)
+        assert metrics.mean_absolute_error(pred_val, self.yd) < 1.0
+        assert metrics.mean_squared_error(pred_val, self.yd) < 1.5
+        assert (opr.cuts_ == np.sort(opr.cuts_)).all()
+        print("\n\n\nAT\nscore: ", metrics.accuracy_score(pred_val, self.yd))
+        print("mse: ", metrics.mean_squared_error(pred_val, self.yd))
+        print("mae: ", metrics.mean_absolute_error(pred_val, self.yd))
+        print("cuts: ", opr.cuts_)
+
+    def test_diabetes_se(self):
+        """test on boston dataset"""
+        opr = OrderedLogitRanker(variant='se')
+        opr.fit(self.Xd, self.yd)
+        pred_val = opr.predict(self.Xd)
+        assert metrics.mean_absolute_error(pred_val, self.yd) < 1.0
+        assert metrics.mean_squared_error(pred_val, self.yd) < 1.5
+        assert (opr.cuts_ == np.sort(opr.cuts_)).all()
+        print("\n\n\nSE\nscore: ", metrics.accuracy_score(pred_val, self.yd))
+        print("mse: ", metrics.mean_squared_error(pred_val, self.yd))
+        print("mae: ", metrics.mean_absolute_error(pred_val, self.yd))
+        print("cuts: ", opr.cuts_)
+
+
+    def test_check_estimatorAT(self):
+        """Runs sklearn necessary estimator checks
+           Since OrderedProbitRanker is not a proper classifier
+           It fails some tests (specifically training perf)
+
+        """
+        # All Threshold Variant
+        estimatorat = OrderedLogitRanker(variant='at')
+        nameat = OrderedLogitRanker.__name__ + "_Variant: AT"
+        check_parameters_default_constructible(nameat, OrderedLogitRanker)
+        check_no_attributes_set_in_init(nameat, estimatorat)
+        for check in _yield_rank_checks(nameat, estimatorat):
+            check(nameat, estimatorat)
+
+    def test_check_estimatorIT(self):
         """Runs sklearn necessary estimator checks
            Since OrderedProbitRanker is not a proper classifier
            It fails some tests (specifically training perf)
         """
-        estimator = OrderedLogitRanker()
-        name = OrderedLogitRanker.__name__
-        check_parameters_default_constructible(name, OrderedLogitRanker)
-        check_no_attributes_set_in_init(name, estimator)
-        for check in _yield_rank_checks(name, estimator):
-            check(name, estimator)
+        # Immediate Threshold Variant
+        estimatorit = OrderedLogitRanker(variant='it')
+        nameit = OrderedLogitRanker.__name__ + "_Variant: IT"
+        check_parameters_default_constructible(nameit, OrderedLogitRanker)
+        check_no_attributes_set_in_init(nameit, estimatorit)
+        for check in _yield_rank_checks(nameit, estimatorit):
+            check(nameit, estimatorit)
 
+    def test_check_estimatorSE(self):
+        """Runs sklearn necessary estimator checks
+           Since OrderedProbitRanker is not a proper classifier
+           It fails some tests (specifically training perf)
+        """
+        # Squared Error Variant
+        estimatorse = OrderedLogitRanker(variant='se')
+        namese = OrderedLogitRanker.__name__ + "_Variant: SE"
+        check_parameters_default_constructible(namese, OrderedLogitRanker)
+        check_no_attributes_set_in_init(namese, estimatorse)
+        for check in _yield_rank_checks(namese, estimatorse):
+            check(namese, estimatorse)
 
     def test_predict_2_classes(self):
         """Simple sanity check on a 2 class dataset"""
@@ -87,13 +154,15 @@ class TestOrderedLogit(unittest.TestCase):
                 np.diag(np.ones(n_class - 2), k=-1)
         loss_fd = np.vstack((loss_fd, np.zeros(n_class - 1)))
         loss_fd[-1, -1] = 1  # border case
-        L = np.eye(n_class - 1) - np.diag(np.ones(n_class - 2), k=-1)
+        # L = np.eye(n_class - 1) - np.diag(np.ones(n_class - 2), k=-1)
+        L = np.zeros((n_class - 1, n_class - 1))
+        L[np.tril_indices(n_class-1)] = 1.
         def fun(x, sample_weights=None):
             return ordinal.logit.obj_margin(
-                x, X, y, 100.0, n_class, loss_fd, L, sample_weights)
+                x, X, y, 100.0, n_class, loss_fd, sample_weights)
         def grad(x, sample_weights=None):
             return ordinal.logit.grad_margin(
-                x, X, y, 100.0, n_class, loss_fd, L, sample_weights)
+                x, X, y, 100.0, n_class, loss_fd, sample_weights)
         assert_greater(
             1e-4,
             optimize.check_grad(fun, grad, x0),
