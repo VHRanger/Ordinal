@@ -113,16 +113,11 @@ def threshold_fit(X, y, alpha, n_class, variant='ae',
 
     Parameters
     ----------
-    variant: str (one of {'at', 'se', 'it'})
+    variant: str (one of {'at', 'se'})
         Loss function variant. One of:
         AT: All-Threshold variant
             Penalizes misclassifications increasingly by distance from target
             Equation 12 in reference [1]
-        IT: Immediate-Threshold variant
-            Penalizes misclassifications linearly by distance from target
-            Closest one to classification rather than regression/ranking
-            (performs better on accuracy_score, worse on mean_absolute_error)
-            Equation 13 in reference [1]
         SE: Squared Error variant
             Penalizes mispredictions by squared error of distance from target
             (treating ordinal labels as integers)
@@ -140,19 +135,12 @@ def threshold_fit(X, y, alpha, n_class, variant='ae',
     # set loss forward difference
     if variant == 'at':
         loss_fd = np.ones((n_class, n_class - 1))
-    elif variant == 'it':
-        # non-square "diagonal" Matrix
-        # (two diagonals are set to 1)
-        loss_fd = (np.diag(np.ones(n_class - 1))
-                   + np.diag(np.ones(n_class - 2), k=-1))
-        loss_fd = np.vstack((loss_fd, np.zeros(n_class - 1)))
-        loss_fd[-1, -1] = 1 # border case
     elif variant == 'se':
         a = np.arange(n_class-1)
         b = np.arange(n_class)
         loss_fd = np.abs((a - b[:, None])**2 - (a - b[:, None]+1)**2)
     else:
-        raise NotImplementedError("Variant must be in {'at', 'se', 'it'}")
+        raise NotImplementedError("Variant must be in {'at', 'se'}")
     x0 = np.zeros(n_features + n_class - 1)
     x0[X.shape[1]:] = np.arange(n_class - 1)
     # Lower Bound the cutoff points at 0
@@ -214,15 +202,10 @@ class OrderedLogitRanker(BaseEstimator, ClassifierMixin):
         Regularization parameter. Zero is no regularization, higher values
         increate the squared l2 regularization.
 
-    variant: str (one of {'at', 'se', 'it'})
+    variant: str (one of {'at', 'se'})
         Loss function variant. One of:
         AT: All-Threshold variant
             Equation 12 in reference [1]
-        IT: Immediate-Threshold variant
-            Contrary to the OrdinalLogistic model, this variant
-            minimizes a convex surrogate of the 0-1 loss. Closer to 
-            classification than AT
-            Equation 13 in reference [1]
         SE: Squared Error variant
             Penalizes mispredictions by squared error of distance between labels
             (treating ordinal labels as integers)
@@ -240,7 +223,7 @@ class OrderedLogitRanker(BaseEstimator, ClassifierMixin):
         self.alpha = alpha
         self.verbose = verbose
         self.variant = variant
-        accepted_variants = ['at', 'se', 'it']
+        accepted_variants = ['at', 'se']
         if self.variant not in accepted_variants:
             raise ValueError("Variant must be in {0}".format(accepted_variants))
 

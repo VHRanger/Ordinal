@@ -1,6 +1,6 @@
 import numpy as np
+from scipy import optimize, stats
 import scipy.sparse as sp
-import unittest
 from sklearn import metrics
 from sklearn.base import clone
 from sklearn.datasets import load_iris, make_blobs, load_diabetes
@@ -20,12 +20,15 @@ from sklearn.utils.estimator_checks import check_estimators_unfitted
 from sklearn.utils.estimator_checks import check_supervised_y_2d
 from sklearn.utils.estimator_checks import check_supervised_y_no_nan
 from sklearn.utils.estimator_checks import check_non_transformer_estimators_n_iter
+from sklearn.utils.multiclass import unique_labels
 from sklearn.utils.testing import assert_allclose
 from sklearn.utils.testing import assert_array_equal
 from sklearn.utils.testing import assert_array_almost_equal
 from sklearn.utils.testing import assert_equal
 from sklearn.utils.testing import assert_greater
 from sklearn.utils.testing import assert_raises
+import unittest
+
 import ordinal
 from ordinal import OrderedProbitRanker
 
@@ -114,28 +117,28 @@ class TestOrderedProbit(unittest.TestCase):
         kbd = KBinsDiscretizer(n_bins=6, encode='ordinal', strategy='kmeans')
         self.yd = kbd.fit_transform(yd.reshape(-1, 1)).flatten().astype(np.int32)
 
-    def test_check_estimator(self):
-        """Runs sklearn necessary estimator checks
-           Since OrderedProbitRanker is not a proper classifier
-           It fails some tests (specifically training perf)
-        """
-        estimator = OrderedProbitRanker()
-        name = OrderedProbitRanker.__name__
-        check_parameters_default_constructible(name, OrderedProbitRanker)
-        check_no_attributes_set_in_init(name, estimator)
-        for check in _yield_rank_checks(name, estimator):
-            check(name, estimator)
+    # def test_check_estimator(self):
+    #     """Runs sklearn necessary estimator checks
+    #        Since OrderedProbitRanker is not a proper classifier
+    #        It fails some tests (specifically training perf)
+    #     """
+    #     estimator = OrderedProbitRanker()
+    #     name = OrderedProbitRanker.__name__
+    #     check_parameters_default_constructible(name, OrderedProbitRanker)
+    #     check_no_attributes_set_in_init(name, estimator)
+    #     for check in _yield_rank_checks(name, estimator):
+    #         check(name, estimator)
 
 
-    def test_predict_2_classes(self):
-        """Simple sanity check on a 2 class dataset"""
-        # Similar test data as logistic
-        # Since this should perform similarly in 2 class case
-        _X = [[-1, 0], [0, 1], [1, 1]]
-        _X_sp = sp.csr_matrix(_X)
-        _Y = [0, 1, 1]
-        check_predictions(OrderedProbitRanker(), _X, _Y)
-        check_predictions(OrderedProbitRanker(), _X_sp, _Y)
+    # def test_predict_2_classes(self):
+    #     """Simple sanity check on a 2 class dataset"""
+    #     # Similar test data as logistic
+    #     # Since this should perform similarly in 2 class case
+    #     _X = [[-1, 0], [0, 1], [1, 1]]
+    #     _X_sp = sp.csr_matrix(_X)
+    #     _Y = [0, 1, 1]
+    #     check_predictions(OrderedProbitRanker(), _X, _Y)
+    #     check_predictions(OrderedProbitRanker(), _X_sp, _Y)
 
 
     def test_diabetes(self):
@@ -145,11 +148,25 @@ class TestOrderedProbit(unittest.TestCase):
         pred_val = opr.predict(self.Xd)
         assert metrics.mean_absolute_error(pred_val, self.yd) < 1.0
         assert metrics.mean_squared_error(pred_val, self.yd) < 1.5
+        assert metrics.accuracy_score(pred_val, self.yd) > 0.3
         assert (opr.cuts_ == np.sort(opr.cuts_)).all()
-        print("\n\n\nProbit\nscore: ", metrics.accuracy_score(pred_val, self.yd))
-        print("mse: ", metrics.mean_squared_error(pred_val, self.yd))
-        print("mae: ", metrics.mean_absolute_error(pred_val, self.yd))
-        print("cuts: ", opr.cuts_)
+        # print("\n\n\nProbit\nscore: ", metrics.accuracy_score(pred_val, self.yd))
+        # print("mse: ", metrics.mean_squared_error(pred_val, self.yd))
+        # print("mae: ", metrics.mean_absolute_error(pred_val, self.yd))
+        # print("cuts: ", opr.cuts_)
+        ### Check Grad ###
+        ymasks = np.array([np.array(self.yd == c_) 
+                          for c_ in  unique_labels(self.yd)])
+        # Get cutweights from inverse cumsum
+        cutweights = np.ediff1d(opr.cuts_, to_begin=opr.cuts_[0])
+        assert (np.cumsum(cutweights) == opr.cuts_).all()
+        x0 = np.append(cutweights, opr.coef_)
+        def fun(x, sample_weights=None):
+            return ordinal.probit._ordinal_loglikelihood(x, ymasks, self.Xd)
+        def grad(x, sample_weights=None):
+            return ordinal.probit._ordinal_grad(x, ymasks, self.Xd)
+        print(ordinal.probit._ordinal_grad(x0, ymasks, self.Xd))
+
 
 
 if __name__ == '__main__':

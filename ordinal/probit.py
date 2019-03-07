@@ -1,11 +1,12 @@
+import warnings
+
 import numpy as np
 import scipy as sc
-import warnings
 from scipy.stats import norm
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
-from sklearn.utils.multiclass import unique_labels
 from sklearn.metrics import euclidean_distances
+from sklearn.utils.multiclass import unique_labels
+from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 
 def safe_divide(x1, x2, large_value=1e15):
@@ -17,6 +18,7 @@ def safe_divide(x1, x2, large_value=1e15):
     res[x1 == 0] = 0
     return res
 
+
 def assert_is_ascending_ordered(classlist):
     """
     Asserts that input is strictly ascending, ordered, transitive.
@@ -27,6 +29,87 @@ def assert_is_ascending_ordered(classlist):
             raise ValueError(
                 """Input is not correctly ordered on Elements {0} and {1}
                 """.format(str(classlist[i]), str(classlist[i+1])))
+
+
+def _ordinal_loglikelihood(betas, ymasks, X):
+    """
+    Log Likelihood function of ordered choice model.
+
+    References
+    ----------
+    Ordered choice models (Greene, William) chpt. 5
+    http://pages.stern.nyu.edu/~wgreene/DiscreteChoice/Readings/OrderedChoiceSurvey.pdf
+    
+    see section 3.5 (p.89, eq. 3.6) for log likelihood function
+    """
+    n_cuts = ymasks.shape[0] - 1
+    xb = X @ betas[n_cuts:]
+    # bottom and top cutpoints are -inf and inf
+    # cumsum ensures cutpoints remain ordered
+    cuts = np.hstack((-np.inf, 
+                        np.cumsum(betas[:n_cuts]), 
+                        np.inf))
+    # Get the distribution's area between each cutpoint
+    # expr x[:,None] - xb outputs shape (n_class - 1, n_samples)
+    cdf_areas = norm.cdf(cuts[:, None] - xb)
+    dist_areas = np.diff(cdf_areas, axis=0)
+    res = np.sum(ymasks * dist_areas, axis=0)
+    res = np.sum(np.log(res))
+    return -res
+
+
+def _ordinal_grad(betas, ymasks, X):
+    """
+    ref:
+    http://pages.stern.nyu.edu/~wgreene/DiscreteChoice/Readings/OrderedChoiceSurvey.pdf
+    section 5.9.5 (p. 134)
+
+    Gradient calculations are on equation 5.15
+    """
+    n_cuts = ymasks.shape[0] - 1
+    xb = X @ betas[n_cuts:]
+    # bottom and top cutpoints are -inf and inf
+    # cumsum ensures cutpoints remain ordered
+    cuts = np.hstack((-np.inf, 
+                        np.cumsum(betas[:n_cuts]), 
+                        np.inf))
+    cdf_areas = norm.cdf(cuts[:, None] - xb)
+    dist_areas = np.diff(cdf_areas, axis=0)
+    grad = np.empty_like(betas)
+    pdf_areas = norm.pdf(cuts[:, None] - xb)
+    grad_areas = np.diff(pdf_areas, axis=0)
+    # pdf / cdf areas on each observations
+    # output shape: [n_classes, n_samples]
+    grad_areas = safe_divide(grad_areas, dist_areas)
+    grad_areas = np.multiply(grad_areas, ymasks)
+    grad_areas = grad_areas @ -X # [n_classes, n_features]
+    # sum over resulting classes for each feature's gradient
+    grad[n_cuts:] = grad_areas.sum(axis=0)
+    #
+    # cutoff point gradient
+    #
+    cut_areas = norm.pdf(cuts[:, None] - xb)
+    
+    print(cut_areas, "\n\n\n")
+    
+    tmp = (ymasks / dist_areas)
+
+    for i in range(n_cuts-1):
+        cut_areas[i] = (
+            cut_areas[i]
+            * (safe_divide(ymasks[i], dist_areas[i]) 
+                - safe_divide(ymasks[i+1], dist_areas[i+1]))
+        )
+
+    # Last one has sign flipped because = (0 - pdf)
+    cut_areas[n_cuts-1] = (
+        cut_areas[n_cuts-1] 
+        * (safe_divide(ymasks[n_cuts-1], dist_areas[n_cuts-1])
+            + safe_divide(ymasks[n_cuts], dist_areas[n_cuts]))
+    )
+    grad[:n_cuts] = cut_areas[1:-1].sum(axis=1)
+    return -grad
+
 
 class OrderedProbitRanker(BaseEstimator, ClassifierMixin):
     """ Ordered probit ranking classifier
@@ -49,92 +132,6 @@ class OrderedProbitRanker(BaseEstimator, ClassifierMixin):
         self.method=method
         self.use_grad=use_grad
         self.verbose=verbose
-
-    @staticmethod
-    def _orderedProbitLogLike(betas, ymasks, X):
-        """
-        Log Likelihood function of ordered choice model.
-
-        References
-        ----------
-        Ordered choice models (Greene, William) chpt. 5
-        http://pages.stern.nyu.edu/~wgreene/DiscreteChoice/Readings/OrderedChoiceSurvey.pdf
-        
-        see section 3.5 (p.89, eq. 3.6) for log likelihood function
-        """
-        n_cuts = ymasks.shape[0] - 1
-        xb = X @ betas[n_cuts:]
-        # bottom and top cutpoints are -inf and inf
-        # cumsum ensures cutpoints remain ordered
-        cuts = np.hstack((-np.inf, 
-                          np.cumsum(betas[:n_cuts]), 
-                          np.inf))
-        # Get the distribution's area between each cutpoint
-        # expr x[:,None] - xb outputs shape (n_class - 1, n_samples)
-        cdf_areas = norm.cdf(cuts[:, None] - xb)
-        dist_areas = np.diff(cdf_areas, axis=0)
-        res = np.sum(ymasks * dist_areas, axis=0)
-        res = np.sum(np.log(res))
-        return -res
-
-
-    @staticmethod
-    def _ordered_probit_loss_and_grad(betas, ymasks, X):
-        """
-        ref:
-        http://pages.stern.nyu.edu/~wgreene/DiscreteChoice/Readings/OrderedChoiceSurvey.pdf
-        section 5.9.5 (p. 134)
-
-        Gradient calculations are on equation 5.15
-        """
-        n_cuts = ymasks.shape[0] - 1
-        xb = X @ betas[n_cuts:]
-        # bottom and top cutpoints are -inf and inf
-        # cumsum ensures cutpoints remain ordered
-        cuts = np.hstack((-np.inf, 
-                          np.cumsum(betas[:n_cuts]), 
-                          np.inf))
-        # Get the distribution's area between each cutpoint
-        # expr x[:,None] - xb outputs shape (n_class - 1, n_samples)
-        cdf_areas = norm.cdf(cuts[:, None] - xb)
-        dist_areas = np.diff(cdf_areas, axis=0)
-        res = np.sum(ymasks * dist_areas, axis=0)
-        res = np.sum(np.log(res))
-        #
-        # Now calculate gradient
-        #
-        grad = np.empty_like(betas)
-        grad_areas = [norm.pdf(ct - xb) for ct in cuts]
-        # pdf of inf is 0 but abs(0 - x) = x, so copy values
-        grad_areas.append(grad_areas[-1])
-        grad_areas = np.array(grad_areas)
-        cut_areas = np.array(grad_areas)
-        for i in range(1, n_cuts):
-            grad_areas[i] = grad_areas[i] - grad_areas[i-1]
-        # pdf / cdf areas on each observations
-        # output shape: [n_classes, n_samples]
-        grad_areas = safe_divide(grad_areas, dist_areas)
-        grad_areas = np.multiply(grad_areas, ymasks)
-        grad_areas = grad_areas @ -X # [n_classes, n_features]
-        # sum over resulting classes for each feature's gradient
-        grad[n_cuts:] = grad_areas.sum(axis=0)
-        #
-        # cutoff point gradient
-        #
-        for i in range(n_cuts-1):
-            cut_areas[i] = (
-                cut_areas[i] 
-                * (safe_divide(ymasks[i], dist_areas[i]) 
-                    - safe_divide(ymasks[i+1], dist_areas[i+1]))
-            )
-        # Last one has sign flipped because = (0 - pdf)
-        cut_areas[n_cuts-1] = (
-            cut_areas[n_cuts-1] 
-            * (safe_divide(ymasks[n_cuts-1], pdf_areas[n_cuts-1])
-               + safe_divide(ymasks[n_cuts], pdf_areas[n_cuts]))
-        )
-        grad[:n_cuts] = cut_areas[:-1].sum(axis=1)
-        return -res, -grad
 
 
     def fit(self, X, y):
@@ -172,20 +169,24 @@ class OrderedProbitRanker(BaseEstimator, ClassifierMixin):
         # TODO: add smarter cutpoint init values
         #       based on quantiles of y and inverse cdf
         # cutpoints must be ascending ordered
-        self.coef_[:n_cuts] = np.linspace(0, 0.4*n_cuts, n_cuts)
+        self.coef_[:n_cuts] = np.linspace(0, 2, n_cuts)
+        self.coef_[0] = -3
         # Lower Bound the cutoff points at 0
-        bounds = [(None, None)] * n_cuts + [(None, None)] * n_features
+        bounds = ([(None, None)] # First cutoff can be negative
+                + [(0, None)] * (n_cuts - 1) # other cutoffs only add in cumsum
+                + [(None, None)] * n_features) # features are unbounded
         if self.use_grad:
             optres = sc.optimize.minimize(
-                fun=self._ordered_probit_loss_and_grad,
+                fun=_ordinal_loglikelihood,
                 x0=self.coef_,
                 args=(masks_, X),
+                bounds=bounds,
                 method=self.method,
-                jac=True,
+                jac=_ordinal_grad,
                 options={"disp":self.verbose, 'maxiter':50000, "maxfun":150000})
         else:
             optres = sc.optimize.minimize(
-                fun=self._orderedProbitLogLike,
+                fun=_ordinal_loglikelihood,
                 x0=self.coef_,
                 args=(masks_, X),
                 bounds=bounds,
@@ -202,7 +203,6 @@ class OrderedProbitRanker(BaseEstimator, ClassifierMixin):
                 RuntimeWarning)
         self.coef_ = optres.x[n_cuts:]
         self.cuts_ = np.cumsum(optres.x[:n_cuts])
-        # self.cuts_ = optres.x[:n_cuts]
         return self
 
 
