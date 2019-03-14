@@ -89,24 +89,30 @@ def _ordinal_grad(betas, ymasks, X):
     # cutoff point gradient
     #
     cut_areas = norm.pdf(cuts[:, None] - xb)
-    
-    print(cut_areas, "\n\n\n")
-    
+    print("\n\nCUT AREAS\n", cut_areas, "\n\n\n")
+    print("cutshape: ", cut_areas.shape)
     tmp = (ymasks / dist_areas)
+    tmpdiff = np.diff(tmp, axis=0)
+    print("\n\n\nTMPDIFF", tmpdiff)
+    print("tmpdiff: ", tmpdiff.shape)
+    print("tmp: ", tmp.shape)
+    print("ymasks: ", ymasks.shape)
+    cut_areas[1:-1] = cut_areas[1:-1] * tmpdiff
+    #
+    #
+    # for i in range(n_cuts-1):
+    #     cut_areas[i] = (
+    #         cut_areas[i]
+    #         * (safe_divide(ymasks[i], dist_areas[i]) 
+    #             - safe_divide(ymasks[i+1], dist_areas[i+1]))
+    #     )
 
-    for i in range(n_cuts-1):
-        cut_areas[i] = (
-            cut_areas[i]
-            * (safe_divide(ymasks[i], dist_areas[i]) 
-                - safe_divide(ymasks[i+1], dist_areas[i+1]))
-        )
-
-    # Last one has sign flipped because = (0 - pdf)
-    cut_areas[n_cuts-1] = (
-        cut_areas[n_cuts-1] 
-        * (safe_divide(ymasks[n_cuts-1], dist_areas[n_cuts-1])
-            + safe_divide(ymasks[n_cuts], dist_areas[n_cuts]))
-    )
+    # # Last one has sign flipped because = (0 - pdf)
+    # cut_areas[n_cuts-1] = (
+    #     cut_areas[n_cuts-1] 
+    #     * (safe_divide(ymasks[n_cuts-1], dist_areas[n_cuts-1])
+    #         + safe_divide(ymasks[n_cuts], dist_areas[n_cuts]))
+    # )
     grad[:n_cuts] = cut_areas[1:-1].sum(axis=1)
     return -grad
 

@@ -165,8 +165,8 @@ class TestOrderedProbit(unittest.TestCase):
             return ordinal.probit._ordinal_loglikelihood(x, ymasks, self.Xd)
         def grad(x, sample_weights=None):
             return ordinal.probit._ordinal_grad(x, ymasks, self.Xd)
-        print(ordinal.probit._ordinal_grad(x0, ymasks, self.Xd))
-
+        print(np.abs(ordinal.probit._ordinal_grad(x0, ymasks, self.Xd)) > 0.01)
+        # print(ordinal.probit._ordinal_grad(x0, ymasks, self.Xd))
 
 
 if __name__ == '__main__':
