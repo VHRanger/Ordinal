@@ -46,9 +46,9 @@ def _ordinal_loglikelihood(betas, ymasks, X):
     xb = X @ betas[n_cuts:]
     # bottom and top cutpoints are -inf and inf
     # cumsum ensures cutpoints remain ordered
-    cuts = np.hstack((-np.inf, 
-                        np.cumsum(betas[:n_cuts]), 
-                        np.inf))
+    cuts = np.hstack((-np.inf,
+                       np.cumsum(betas[:n_cuts]), 
+                       np.inf))
     # Get the distribution's area between each cutpoint
     # expr x[:,None] - xb outputs shape (n_class - 1, n_samples)
     cdf_areas = norm.cdf(cuts[:, None] - xb)

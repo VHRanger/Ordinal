@@ -88,7 +88,7 @@ def grad_margin(x0, X, y, alpha, n_class, loss_fd_weights, sample_weight):
     cutpoints = np.cumsum(cutweights, dtype='float64')
     loss_fd = loss_fd_weights[y]
 
-    Xw = X.dot(w)
+    Xw = X @ w
     cut_distance = cutpoints[:, None] - Xw  # (n_class - 1, n_samples)
     err_sign = np.sign(np.arange(n_class - 1)[:, None] - y + 0.5)
 
